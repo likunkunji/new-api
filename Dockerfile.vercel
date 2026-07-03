@@ -1,57 +1,48 @@
-# ==================== 阶段1：构建前端 default ====================
-FROM oven/bun:1 AS frontend-builder
+# ==================== 阶段1：构建前端 ====================
+FROM node:20-alpine AS frontend-builder
 
-WORKDIR /build/web
-COPY web/package.json web/bun.lock ./
-COPY web/default/package.json ./default/package.json
-COPY web/classic/package.json ./classic/package.json
-RUN bun install --frozen-lockfile
-COPY ./web/default ./default
-COPY ./VERSION /build/VERSION
-RUN cd default && \
-    DISABLE_ESLINT_PLUGIN='true' \
-    VITE_REACT_APP_VERSION=$(cat /build/VERSION) \
-    bun run build
+WORKDIR /web
+COPY web/default/package.json web/default/package-lock.json* ./
+RUN npm ci || npm install
 
-# ==================== 阶段2：构建前端 classic ====================
-FROM oven/bun:1 AS frontend-builder-classic
+COPY web/default/ ./
+# 根据项目的实际构建命令调整
+RUN npm run build
 
-WORKDIR /build/web
-COPY web/package.json web/bun.lock ./
-COPY web/default/package.json ./default/package.json
-COPY web/classic/package.json ./classic/package.json
-RUN bun install --filter ./classic --frozen-lockfile
-COPY ./web/classic ./classic
-COPY ./VERSION /build/VERSION
-RUN cd classic && \
-    VITE_REACT_APP_VERSION=$(cat /build/VERSION) \
-    bun run build
+# ==================== 阶段2：构建后端 ====================
+FROM golang:1.24-alpine AS backend-builder
 
-# ==================== 阶段3：构建 Go 后端 ====================
-FROM golang:1.26.1-alpine AS backend-builder
-
-ENV GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=amd64
-ENV GOEXPERIMENT=greenteagc
-
-WORKDIR /build
-ADD go.mod go.sum ./
+WORKDIR /src
+COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
-COPY --from=frontend-builder /build/web/default/dist ./web/default/dist
-COPY --from=frontend-builder-classic /build/web/classic/dist ./web/classic/dist
-RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
-# ==================== 阶段4：运行时镜像 ====================
+COPY . .
+# 将前端构建产物复制到正确位置
+COPY --from=frontend-builder /web/build ./web/default/build
+COPY --from=frontend-builder /web/dist ./web/default/dist
+
+# 构建 Go 二进制
+RUN go build -o /new-api main.go
+
+# ==================== 阶段3：运行时镜像 ====================
 FROM alpine:3.20
 
+WORKDIR /app
+
+# 安装必要依赖
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=backend-builder /build/new-api /app/new-api
-COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /app/licenses/
+# 复制二进制
+COPY --from=backend-builder /new-api /app/new-api
 
+# 复制前端嵌入式资源（如果有的话）
+COPY --from=backend-builder /src/web /app/web
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+
+# Vercel 会注入 PORT 环境变量
 EXPOSE 3000
 
-# main.go 已经支持读取 PORT 环境变量！
-# var port = os.Getenv("PORT")
-# if port == "" { port = strconv.Itoa(*common.Port) }
+# 确保监听 $PORT
 CMD ["/app/new-api"]
