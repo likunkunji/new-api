@@ -1,9 +1,0 @@
-// vercel.json
-{
-  "builds": [
-    {
-      "src": "Dockerfile.vercel",
-      "use": "@vercel/docker"
-    }
-  ]
-}
