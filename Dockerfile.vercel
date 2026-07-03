@@ -34,9 +34,9 @@ RUN cd classic && \
     bun run build
 
 # ============================================================
-# 阶段 3: 编译 Go 后端
+# 阶段 3: 编译 Go 后端 —— ✅ 改为 1.26
 # ============================================================
-FROM golang:1.24-alpine AS backend
+FROM golang:1.26-alpine AS backend
 
 ENV GO111MODULE=on CGO_ENABLED=0
 ENV GOOS=linux GOARCH=amd64
@@ -52,7 +52,7 @@ COPY --from=frontend-classic /build/web/classic/dist ./web/classic/dist
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 # ============================================================
-# 阶段 4: 运行时（精简镜像）
+# 阶段 4: 运行时
 # ============================================================
 FROM alpine:3.20
 
