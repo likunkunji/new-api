@@ -1,14 +1,11 @@
-# ============================================================
-# 阶段 1: 构建 default 前端
-# ============================================================
-FROM oven/bun:1 AS frontend-default
+# ==================== 阶段1：构建前端 default ====================
+FROM oven/bun:1 AS frontend-builder
 
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
 COPY web/default/package.json ./default/package.json
 COPY web/classic/package.json ./classic/package.json
 RUN bun install --frozen-lockfile
-
 COPY ./web/default ./default
 COPY ./VERSION /build/VERSION
 RUN cd default && \
@@ -16,53 +13,45 @@ RUN cd default && \
     VITE_REACT_APP_VERSION=$(cat /build/VERSION) \
     bun run build
 
-# ============================================================
-# 阶段 2: 构建 classic 前端
-# ============================================================
-FROM oven/bun:1 AS frontend-classic
+# ==================== 阶段2：构建前端 classic ====================
+FROM oven/bun:1 AS frontend-builder-classic
 
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
 COPY web/default/package.json ./default/package.json
 COPY web/classic/package.json ./classic/package.json
 RUN bun install --filter ./classic --frozen-lockfile
-
 COPY ./web/classic ./classic
 COPY ./VERSION /build/VERSION
 RUN cd classic && \
     VITE_REACT_APP_VERSION=$(cat /build/VERSION) \
     bun run build
 
-# ============================================================
-# 阶段 3: 编译 Go 后端
-# ============================================================
-FROM golang:1.24-alpine AS backend
+# ==================== 阶段3：构建 Go 后端 ====================
+FROM golang:1.26.1-alpine AS backend-builder
 
-ENV GO111MODULE=on CGO_ENABLED=0
-ENV GOOS=linux GOARCH=amd64
+ENV GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 ADD go.mod go.sum ./
 RUN go mod download
-
 COPY . .
-COPY --from=frontend-default /build/web/default/dist ./web/default/dist
-COPY --from=frontend-classic /build/web/classic/dist ./web/classic/dist
-
+COPY --from=frontend-builder /build/web/default/dist ./web/default/dist
+COPY --from=frontend-builder-classic /build/web/classic/dist ./web/classic/dist
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
-# ============================================================
-# 阶段 4: 运行时（精简镜像）
-# ============================================================
+# ==================== 阶段4：运行时镜像 ====================
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=backend /build/new-api /app/new-api
-COPY --from=backend /build/LICENSE /app/licenses/LICENSE
-COPY --from=backend /build/NOTICE /app/licenses/NOTICE
+COPY --from=backend-builder /build/new-api /app/new-api
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /app/licenses/
 
-WORKDIR /data
 EXPOSE 3000
 
-ENTRYPOINT ["/app/new-api"]
+# main.go 已经支持读取 PORT 环境变量！
+# var port = os.Getenv("PORT")
+# if port == "" { port = strconv.Itoa(*common.Port) }
+CMD ["/app/new-api"]
